@@ -1,0 +1,137 @@
+openapi: 3.0.0
+info:
+  title: ${prefix}-archiver
+  version: 1.0.0
+  description: Система архивирования файлов (КР № 1, ВвОТ).
+
+x-yc-apigateway:
+  service_account_id: ${service_account_id}
+
+paths:
+  /tasks:
+    post:
+      summary: Создать задание на архивирование файла
+      operationId: createTask
+      x-yc-apigateway-validator:
+        validateRequestBody: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Task'
+      responses:
+        '200':
+          description: Задание поставлено в очередь
+          x-yc-status-mapping: 202
+        '400':
+          description: Некорректное задание
+      x-yc-apigateway-integration:
+        type: cloud_ymq
+        action: SendMessage
+        queue_url: ${queue_url}
+        folder_id: ${folder_id}
+        payload_format_type: body
+
+  /archives:
+    get:
+      summary: Получить список архивов
+      operationId: listArchives
+      responses:
+        '200':
+          description: Список архивов
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Archive'
+      x-yc-apigateway-integration:
+        type: cloud_ydb
+        action: Scan
+        database: ${database}
+        table_name: ${table}
+
+  /archives/{key}:
+    get:
+      summary: Получить информацию об архиве
+      operationId: getArchive
+      parameters:
+        - $ref: '#/components/parameters/key'
+      responses:
+        '200':
+          description: Информация об архиве
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Archive'
+        '404':
+          description: Архив не найден
+      x-yc-apigateway-integration:
+        type: cloud_ydb
+        action: GetItem
+        database: ${database}
+        table_name: ${table}
+        key: '{"key": "{key}"}'
+
+  /download/{key}:
+    get:
+      summary: Скачать ZIP-архив
+      operationId: downloadArchive
+      parameters:
+        - $ref: '#/components/parameters/key'
+      responses:
+        '200':
+          description: ZIP-архив
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Архив не найден
+      x-yc-apigateway-integration:
+        type: object_storage
+        bucket: ${bucket}
+        object: '{key}'
+
+components:
+  parameters:
+    key:
+      name: key
+      in: path
+      required: true
+      description: Ключ ZIP-архива в хранилище, `<uuid_v7>.zip`
+      schema:
+        type: string
+
+  schemas:
+    Task:
+      type: object
+      required: [name, url]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          description: Название файла
+          example: document.pdf
+        url:
+          type: string
+          pattern: '^https?://[^/\s:?#]+(:[0-9]+)?([/?#]\S*)?$'
+          description: Ссылка, по которой можно скачать файл
+          example: https://example.com/document.pdf
+
+    Archive:
+      type: object
+      required: [name, url, key]
+      properties:
+        name:
+          type: string
+          description: Название файла
+        url:
+          type: string
+          description: URL источника
+        key:
+          type: string
+          description: Ключ ZIP-архива в хранилище
+          example: 019a8f3e-7c2b-7d41-9a3e-5b6c7d8e9f01.zip
